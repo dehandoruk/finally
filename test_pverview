@@ -1,0 +1,41 @@
+# FinAlly — Repo Overview & Next Steps
+
+Status snapshot as of 2026-08-26, based on reviewing the working tree against `planning/PLAN.md`.
+
+## What exists today
+
+Only the **market data subsystem** has been built, in `backend/app/market/`:
+
+- `models.py`, `interface.py`, `cache.py`, `seed_prices.py`, `simulator.py` (GBM simulator with correlated moves), `massive_client.py` (Polygon.io REST poller), `factory.py`, `stream.py` (SSE endpoint factory)
+- 73 passing unit tests in `backend/tests/market/`, ~84% coverage
+- A terminal demo script, `backend/market_data_demo.py`
+- Documented in `planning/MARKET_DATA_SUMMARY.md` and `planning/archive/`
+
+This is a self-contained module: it can produce a `PriceCache` and an SSE router, but nothing in the repo wires it into a running app yet.
+
+## What's missing
+
+Everything else described in `planning/PLAN.md`:
+
+1. **No FastAPI app.** `backend/app/__init__.py` is empty — there's no `main.py`/`app` instance, no `uv run uvicorn` entrypoint, and the market module's `create_stream_router()` is never mounted anywhere.
+2. **No database layer.** No `backend/db/` schema/seed code, no SQLite lazy-init logic, none of the tables from PLAN.md §7 (`users_profile`, `watchlist`, `positions`, `trades`, `portfolio_snapshots`, `chat_messages`).
+3. **No REST API routes.** None of the endpoints in PLAN.md §8 exist: `/api/portfolio`, `/api/portfolio/trade`, `/api/portfolio/history`, `/api/watchlist` (GET/POST/DELETE), `/api/chat`, `/api/health`.
+4. **No LLM/chat integration.** No LiteLLM/OpenRouter wiring, no structured-output schema handling, no `LLM_MOCK` mode. (Repo has a `cerebras` skill available under `.claude/skills/` to use for this.)
+5. **No frontend at all.** `frontend/` doesn't exist — no Next.js project, no watchlist grid, charts, heatmap, positions table, trade bar, or chat panel.
+6. **No Docker/deployment.** No `Dockerfile`, no `docker-compose.yml`, no `scripts/start_*`/`stop_*` scripts, no `db/` volume mount directory.
+7. **No env scaffolding.** No `.env.example` at the root (PLAN.md §5 specifies `OPENROUTER_API_KEY`, `MASSIVE_API_KEY`, `LLM_MOCK`).
+8. **No E2E tests.** No `test/` directory, no Playwright setup, no `docker-compose.test.yml`.
+
+## Recommended next steps (in order)
+
+The natural build order follows the dependency chain: DB → API → app wiring → frontend → chat → Docker → E2E.
+
+1. **Database layer** (`backend/app/db/` or `backend/db/`) — schema creation, lazy init, seed data per PLAN.md §7. This unblocks portfolio/watchlist/trade logic.
+2. **Portfolio & watchlist logic + REST routes** — trade execution (buy/sell validation, avg cost, P&L), watchlist CRUD, portfolio snapshot recording (30s background task + post-trade). Wire up `/api/portfolio*`, `/api/watchlist*`, `/api/health`.
+3. **FastAPI app entrypoint** — `backend/app/main.py` that creates the app, initializes the DB, starts the market data source, mounts the market `stream` router and the new portfolio/watchlist routers, and (later) serves static frontend files.
+4. **LLM chat integration** — `/api/chat` endpoint using the `cerebras-inference` skill (LiteLLM → OpenRouter → `openrouter/openai/gpt-oss-120b` via Cerebras), structured output schema (message/trades/watchlist_changes), auto-execution through the same trade/watchlist logic as step 2, plus `LLM_MOCK` deterministic mode for tests.
+5. **Frontend** — Next.js + TypeScript static export: watchlist panel with SSE `EventSource` + sparklines, main chart, portfolio heatmap, P&L chart, positions table, trade bar, AI chat panel, header with connection status. Tailwind CSS with the PLAN.md color scheme.
+6. **Docker & scripts** — multi-stage `Dockerfile` (Node build → Python runtime), `db/` volume mount, `scripts/start_mac.sh`/`stop_mac.sh` (+ Windows equivalents), root `.env.example`.
+7. **E2E tests** — `test/docker-compose.test.yml` + Playwright scenarios from PLAN.md §12 (fresh start, watchlist CRUD, buy/sell, visualizations, mocked chat, SSE reconnection).
+
+Backend unit tests (portfolio math edge cases, chat structured-output parsing) should be added alongside steps 2 and 4 rather than deferred to the end, consistent with how the market data module was built and tested together.
